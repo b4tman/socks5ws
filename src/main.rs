@@ -31,21 +31,10 @@ struct Cli {
     command: Command,
 }
 
-macro_rules! handle_error {
-    ($name:expr, $res:expr) => {
-        match $res {
-            Err(e) => {
-                log::error!("{} error: {:#?}", $name, e)
-            }
-            _ => (),
-        }
-    };
-}
-
 fn main() {
     let args = Cli::parse();
 
-    let _logger = Logger::try_with_str("info")
+    let logger = Logger::try_with_str("info")
         .unwrap()
         .log_to_file(
             FileSpec::default().directory(std::env::current_exe().unwrap().parent().unwrap()),
@@ -67,11 +56,17 @@ fn main() {
         )
         .unwrap();
 
-    match args.command {
-        Command::Install => handle_error!("install", service::install()),
-        Command::Uninstall => handle_error!("uninstall", service::uninstall()),
-        Command::Run => handle_error!("run", service::run()),
-        Command::Start => handle_error!("start", service::start()),
-        Command::Stop => handle_error!("stop", service::stop()),
+    let res = match args.command {
+        Command::Install => service::install(),
+        Command::Uninstall => service::uninstall(),
+        Command::Run => service::run(),
+        Command::Start => service::start(),
+        Command::Stop => service::stop(),
+    };
+
+    if let Err(e) = res {
+        log::error!("{:?} error: {:#?}", args.command, e);
     }
+
+    drop(logger);
 }
