@@ -45,7 +45,7 @@ macro_rules! handle_error {
 fn main() {
     let args = Cli::parse();
 
-    Logger::try_with_str("info")
+    let _logger = Logger::try_with_str("info")
         .unwrap()
         .log_to_file(
             FileSpec::default().directory(std::env::current_exe().unwrap().parent().unwrap()),
@@ -59,6 +59,7 @@ fn main() {
         .adaptive_format_for_stderr(AdaptiveFormat::Detailed)
         .print_message()
         .duplicate_to_stderr(Duplicate::Warn)
+        .write_mode(flexi_logger::WriteMode::Async)
         .start_with_specfile(
             std::env::current_exe()
                 .unwrap()
