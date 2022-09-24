@@ -55,6 +55,7 @@ fn main() {
             Naming::Timestamps,
             Cleanup::KeepLogFiles(4),
         )
+        .format(flexi_logger::detailed_format)
         .adaptive_format_for_stderr(AdaptiveFormat::Detailed)
         .print_message()
         .duplicate_to_stderr(Duplicate::Warn)
