@@ -12,6 +12,16 @@ use tokio_util::sync::CancellationToken;
 use crate::config::Config;
 use crate::config::PasswordAuth;
 
+pub fn server_executor(cfg: Config, token: CancellationToken) {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            spawn_socks5_server(cfg, token).await.unwrap();
+        })
+}
+
 pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> Result<()> {
     let mut server_config = fast_socks5::server::Config::default();
     server_config.set_request_timeout(cfg.request_timeout);
@@ -34,8 +44,7 @@ pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> Resul
 
     log::info!("Listen for socks connections @ {}", &cfg.listen_addr);
 
-    // Standard TCP loop
-    while let Some(socket_res) = or_chancel(incoming.next(), token.child_token()).await {
+    while let Some(socket_res) = check_cancelled(incoming.next(), token.child_token()).await {
         match socket_res {
             Ok(socket) => {
                 let child_token = token.child_token();
@@ -50,13 +59,13 @@ pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> Resul
     Ok(())
 }
 
-async fn or_chancel<F, R>(future: F, token: CancellationToken) -> Option<R>
+async fn check_cancelled<F, R>(future: F, token: CancellationToken) -> Option<R>
 where
     F: Future<Output = Option<R>>,
 {
     select! {
         _ = token.cancelled() => {
-            log::error!("canceled");
+            log::error!("accept canceled");
             None
         }
         res = future => {
@@ -71,7 +80,6 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     tokio::spawn(async move {
-        // Wait for either cancellation or a very long time
         let result = select! {
             _ = token.cancelled() => {
                 Err("Client connection canceled".to_string())

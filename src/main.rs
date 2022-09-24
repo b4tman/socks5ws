@@ -5,12 +5,11 @@ use tokio_util::sync::CancellationToken;
 mod config;
 mod server;
 use crate::config::Config;
-use crate::server::spawn_socks5_server;
+use crate::server::server_executor;
 
 use flexi_logger::{AdaptiveFormat, Age, Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 
-#[tokio::main]
-async fn main() {
+fn main() {
     Logger::try_with_str("info")
         .unwrap()
         .log_to_file(FileSpec::default())
@@ -25,21 +24,15 @@ async fn main() {
         .start_with_specfile("logspec.toml")
         .unwrap();
 
-    let cfg = tokio::task::spawn_blocking(Config::get)
-        .await
-        .expect("get config");
+    let cfg = Config::get();
     log::info!("cfg: {:#?}", cfg);
 
     let token = CancellationToken::new();
     let child_token = token.child_token();
+    let handle = std::thread::spawn(move || server_executor(cfg, child_token));
 
-    let (r, _) = tokio::join!(
-        spawn_socks5_server(cfg, child_token),
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-            token.cancel();
-        })
-    );
+    std::thread::sleep(std::time::Duration::from_secs(10));
+    token.cancel();
 
-    r.unwrap();
+    handle.join().unwrap();
 }
