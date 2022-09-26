@@ -20,6 +20,8 @@ enum Command {
     Stop,
     /// run service (by Windows)
     Run,
+    /// save default config
+    SaveConfig,
 }
 
 /// SOCKS5 proxy windows service
@@ -62,6 +64,10 @@ fn main() {
         Command::Run => service::run(),
         Command::Start => service::start(),
         Command::Stop => service::stop(),
+        Command::SaveConfig => {
+            config::Config::default().save();
+            Ok(())
+        }
     };
 
     if let Err(e) = res {

@@ -1,12 +1,17 @@
-use std::{env, fs, io::Read, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
-use serde_derive::Deserialize;
+use serde_derive::{Deserialize, Serialize};
 
-#[derive(Clone, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Config {
     /// Bind on address address. eg. `127.0.0.1:1080`
+    #[serde(default = "default_listen_addr")]
     pub listen_addr: String,
     /// Request timeout
+    #[serde(default = "default_timeout")]
     pub request_timeout: u64,
     /// Authentication
     #[serde(default)]
@@ -29,8 +34,16 @@ fn default_true() -> bool {
     true
 }
 
+fn default_timeout() -> u64 {
+    60
+}
+
+fn default_listen_addr() -> String {
+    "127.0.0.1:1080".into()
+}
+
 /// Password authentication data
-#[derive(Clone, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct PasswordAuth {
     pub username: String,
     pub password: String,
@@ -39,8 +52,8 @@ pub struct PasswordAuth {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            listen_addr: "127.0.0.1:1080".into(),
-            request_timeout: 120,
+            listen_addr: default_listen_addr(),
+            request_timeout: default_timeout(),
             auth: None,
             skip_auth: false,
             dns_resolve: true,
@@ -52,34 +65,49 @@ impl Default for Config {
 
 impl Config {
     const FILENAME: &'static str = "config.toml";
-    fn read(filename: &str) -> Result<Self, &str> {
-        let mut file = fs::File::open(filename).map_err(|_| "can't open config")?;
-        let mut data = vec![];
-        file.read_to_end(&mut data)
-            .map_err(|_| "can't read config")?;
-        toml::from_slice(&data).map_err(|_| "can't parse config")
+    fn read<P: AsRef<Path>>(path: P) -> Result<Self, String> {
+        let data = fs::read(path).map_err(|e| format!("can't read config: {:?}", e))?;
+        toml::from_slice(&data).map_err(|e| format!("can't parse config: {:?}", e))
     }
-    fn file_location() -> Result<PathBuf, &'static str> {
-        let mut res = env::current_exe().map_err(|_| "can't get current exe path")?;
-        res.pop();
-        res.push(Config::FILENAME);
+    fn write<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
+        let data = toml::to_vec(&self).map_err(|e| format!("can't serialize config: {:?}", e))?;
+        fs::write(path, &data).map_err(|e| format!("can't write config: {:?}", e))
+    }
+    fn file_location() -> Result<PathBuf, String> {
+        let res = env::current_exe()
+            .map_err(|e| format!("can't get current exe path: {:?}", e))?
+            .with_file_name(Config::FILENAME);
         Ok(res)
     }
     pub fn get() -> Self {
         let path = Config::file_location();
-        if path.is_err() {
-            log::error!("Error: {}, using default config", path.err().unwrap());
+        if let Err(e) = path {
+            log::error!("Error: {e}, using default config");
             return Config::default();
         }
 
         let path = path.unwrap();
-        let cfg = Config::read(path.to_str().unwrap());
+        let cfg = Config::read(path);
         match cfg {
             Err(e) => {
                 log::error!("Error: {e}, using default config");
                 Config::default()
             }
             Ok(cfg) => cfg,
+        }
+    }
+    pub fn save(&self) {
+        let path = Config::file_location();
+        if let Err(ref e) = path {
+            log::error!("save error: {}", &e);
+        }
+        let path = path.unwrap();
+
+        let res = self.write(&path);
+        if let Err(e) = res {
+            log::error!("save error: {e}");
+        } else {
+            log::info!("config saved to: {}", path.to_str().unwrap());
         }
     }
 }
