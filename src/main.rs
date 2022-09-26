@@ -4,7 +4,9 @@ mod config;
 mod server;
 mod service;
 
-use flexi_logger::{AdaptiveFormat, Age, Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+use flexi_logger::{
+    AdaptiveFormat, Age, Cleanup, Criterion, Duplicate, FileSpec, Logger, LoggerHandle, Naming,
+};
 
 use clap::{Parser, Subcommand};
 
@@ -33,13 +35,16 @@ struct Cli {
     command: Command,
 }
 
-fn main() {
-    let args = Cli::parse();
-
-    let logger = Logger::try_with_str("info")
-        .unwrap()
+fn create_logger() -> LoggerHandle {
+    Logger::try_with_str("info")
+        .expect("default logging level invalid")
         .log_to_file(
-            FileSpec::default().directory(std::env::current_exe().unwrap().parent().unwrap()),
+            FileSpec::default().directory(
+                std::env::current_exe()
+                    .expect("can't get current exe path")
+                    .parent()
+                    .expect("can't get parent folder"),
+            ),
         )
         .rotate(
             Criterion::Age(Age::Day),
@@ -56,7 +61,12 @@ fn main() {
                 .unwrap()
                 .with_file_name("logspec.toml"),
         )
-        .unwrap();
+        .expect("can't start logger")
+}
+
+fn main() {
+    let args = Cli::parse();
+    let logger = create_logger();
 
     let res = match args.command {
         Command::Install => service::install(),
