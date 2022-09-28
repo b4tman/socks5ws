@@ -52,9 +52,9 @@ fn create_logger() -> LoggerHandle {
             Cleanup::KeepLogFiles(4),
         )
         .format(flexi_logger::detailed_format)
-        .adaptive_format_for_stderr(AdaptiveFormat::Detailed)
+        .adaptive_format_for_stdout(AdaptiveFormat::Detailed)
         .print_message()
-        .duplicate_to_stderr(Duplicate::Warn)
+        .duplicate_to_stdout(Duplicate::Info)
         .write_mode(flexi_logger::WriteMode::Async)
         .start_with_specfile(
             std::env::current_exe()
