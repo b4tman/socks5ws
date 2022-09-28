@@ -21,6 +21,56 @@ const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 const SERVICE_DISPLAY: &str = "socks5ws proxy";
 const SERVICE_DESCRIPTION: &str = "SOCKS5 proxy windows service";
 
+trait ErrorToString {
+    type Output;
+    fn str_err(self) -> std::result::Result<Self::Output, String>;
+}
+
+impl<T, E> ErrorToString for std::result::Result<T, E>
+where
+    E: std::error::Error,
+{
+    type Output = T;
+    fn str_err(self) -> std::result::Result<Self::Output, String> {
+        self.map_err(|e| e.to_string())
+    }
+}
+
+trait ServiceStatusEx {
+    fn running() -> ServiceStatus;
+    fn stopped() -> ServiceStatus;
+    fn stopped_with_error(code: u32) -> ServiceStatus;
+}
+
+impl ServiceStatusEx for ServiceStatus {
+    fn running() -> ServiceStatus {
+        ServiceStatus {
+            service_type: SERVICE_TYPE,
+            current_state: ServiceState::Running,
+            controls_accepted: ServiceControlAccept::STOP,
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: Duration::default(),
+            process_id: None,
+        }
+    }
+
+    fn stopped() -> ServiceStatus {
+        ServiceStatus {
+            current_state: ServiceState::Stopped,
+            controls_accepted: ServiceControlAccept::empty(),
+            ..Self::running()
+        }
+    }
+
+    fn stopped_with_error(code: u32) -> ServiceStatus {
+        ServiceStatus {
+            exit_code: ServiceExitCode::ServiceSpecific(code),
+            ..Self::stopped()
+        }
+    }
+}
+
 pub fn install() -> windows_service::Result<()> {
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
@@ -113,13 +163,15 @@ define_windows_service!(ffi_service_main, my_service_main);
 // output to file if needed.
 pub fn my_service_main(_arguments: Vec<OsString>) {
     if let Err(e) = run_service() {
-        log::error!("{:#?}", e);
+        log::error!("error: {:#?}", e);
     }
 }
 
-pub fn run_service() -> Result<()> {
+pub fn run_service() -> std::result::Result<(), String> {
     // Create a channel to be able to poll a stop event from the service worker loop.
     let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+    let shutdown_tx1 = shutdown_tx.clone();
 
     // Define system service event handler that will be receiving service events.
     let event_handler = move |control_event| -> ServiceControlHandlerResult {
@@ -130,8 +182,8 @@ pub fn run_service() -> Result<()> {
 
             // Handle stop
             ServiceControl::Stop => {
-                log::debug!("Stop signal from system");
-                shutdown_tx.send(()).unwrap();
+                log::debug!("stop signal from system");
+                shutdown_tx1.send(()).unwrap();
                 ServiceControlHandlerResult::NoError
             }
 
@@ -141,43 +193,47 @@ pub fn run_service() -> Result<()> {
 
     // Register system service event handler.
     // The returned status handle should be used to report service status changes to the system.
-    let status_handle = service_control_handler::register(SERVICE_NAME, event_handler)?;
+    let status_handle = service_control_handler::register(SERVICE_NAME, event_handler).str_err()?;
 
     // Tell the system that service is running
-    status_handle.set_service_status(ServiceStatus {
-        service_type: SERVICE_TYPE,
-        current_state: ServiceState::Running,
-        controls_accepted: ServiceControlAccept::STOP,
-        exit_code: ServiceExitCode::Win32(0),
-        checkpoint: 0,
-        wait_hint: Duration::default(),
-        process_id: None,
-    })?;
+    status_handle
+        .set_service_status(ServiceStatus::running())
+        .str_err()?;
 
     let cfg = Config::get();
     log::info!("start with config: {:#?}", cfg);
 
     let token = CancellationToken::new();
     let child_token = token.child_token();
-    let server_handle = std::thread::spawn(move || server_executor(cfg, child_token));
+    let server_handle = std::thread::spawn(move || server_executor(cfg, child_token, shutdown_tx));
 
     shutdown_rx.recv().unwrap(); // wait for shutdown signal
     log::info!("service stop");
 
     // stop server
     token.cancel();
-    server_handle.join().unwrap();
+
+    let result = server_handle.join();
+    if let Err(e) = result {
+        log::error!("server panic: {:#?}", e);
+        status_handle
+            .set_service_status(ServiceStatus::stopped_with_error(1))
+            .str_err()?;
+        return Err("server panic".into());
+    }
+
+    let result = result.unwrap();
+    if let Err(e) = result {
+        log::error!("server error: {:#?}", e);
+        status_handle
+            .set_service_status(ServiceStatus::stopped_with_error(2))
+            .str_err()?;
+        return Err("server error".into());
+    }
 
     // Tell the system that service has stopped.
-    status_handle.set_service_status(ServiceStatus {
-        service_type: SERVICE_TYPE,
-        current_state: ServiceState::Stopped,
-        controls_accepted: ServiceControlAccept::empty(),
-        exit_code: ServiceExitCode::Win32(0),
-        checkpoint: 0,
-        wait_hint: Duration::default(),
-        process_id: None,
-    })?;
-
+    status_handle
+        .set_service_status(ServiceStatus::stopped())
+        .str_err()?;
     Ok(())
 }

@@ -6,23 +6,32 @@ use std::future::Future;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::select;
 use tokio::task;
-use tokio_stream::StreamExt;
+use tokio_stream::{Stream, StreamExt};
 use tokio_util::sync::CancellationToken;
+
+use std::sync::mpsc::Sender;
+
+use async_stream::stream;
 
 use crate::config::Config;
 use crate::config::PasswordAuth;
 
-pub fn server_executor(cfg: Config, token: CancellationToken) {
+pub fn server_executor(
+    cfg: Config,
+    token: CancellationToken,
+    shutdown_tx: Sender<()>,
+) -> std::io::Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .build()
-        .unwrap()
+        .build()?
         .block_on(async {
-            spawn_socks5_server(cfg, token).await.unwrap();
+            let result = spawn_socks5_server(cfg, token).await;
+            shutdown_tx.send(()).unwrap();
+            result
         })
 }
 
-pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> Result<()> {
+pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> std::io::Result<()> {
     let mut server_config = fast_socks5::server::Config::default();
     server_config.set_request_timeout(cfg.request_timeout);
     server_config.set_skip_auth(cfg.skip_auth);
@@ -40,11 +49,12 @@ pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> Resul
     let mut listener = Socks5Server::bind(&cfg.listen_addr).await?;
     listener.set_config(server_config);
 
-    let mut incoming = listener.incoming();
+    let incoming = stream_with_cancellation(listener.incoming(), &token);
+    tokio::pin!(incoming);
 
     log::info!("Listen for socks connections @ {}", &cfg.listen_addr);
 
-    while let Some(socket_res) = check_cancelled(incoming.next(), token.child_token()).await {
+    while let Some(socket_res) = incoming.next().await {
         match socket_res {
             Ok(socket) => {
                 let child_token = token.child_token();
@@ -59,14 +69,31 @@ pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> Resul
     Ok(())
 }
 
-async fn check_cancelled<F, R>(future: F, token: CancellationToken) -> Option<R>
+fn stream_with_cancellation<'a, S>(
+    mut inner: S,
+    token: &'a CancellationToken,
+) -> impl Stream<Item = <S as Stream>::Item> + 'a
 where
-    F: Future<Output = Option<R>>,
+    S: StreamExt + Unpin + 'a,
+{
+    stream! {
+        while let Some(res) = check_cancelled(inner.next(), token, None).await  {
+            yield res;
+        }
+    }
+}
+
+async fn check_cancelled<F, R>(future: F, token: &CancellationToken, default: R) -> R
+where
+    F: Future<Output = R>,
 {
     select! {
+        biased;
+
         _ = token.cancelled() => {
             log::error!("accept canceled");
-            None
+
+            default
         }
         res = future => {
             res
@@ -81,11 +108,13 @@ where
 {
     tokio::spawn(async move {
         let result = select! {
+            biased;
+
             _ = token.cancelled() => {
                 Err("Client connection canceled".to_string())
             }
             res = future => {
-                res.map_err(|e| format!("{:#}", &e))
+                res.map_err(|e| e.to_string())
             }
         };
         if let Err(e) = result {
