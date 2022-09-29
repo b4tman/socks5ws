@@ -4,11 +4,13 @@ mod config;
 mod server;
 mod service;
 
+use config::Config;
 use flexi_logger::{
     AdaptiveFormat, Age, Cleanup, Criterion, Duplicate, FileSpec, Logger, LoggerHandle, Naming,
 };
 
 use clap::{Parser, Subcommand};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Subcommand, Debug)]
 enum Command {
@@ -24,6 +26,8 @@ enum Command {
     Run,
     /// save default config
     SaveConfig,
+    /// run server as foreground proccess
+    Serve,
 }
 
 /// SOCKS5 proxy windows service
@@ -64,6 +68,22 @@ fn create_logger() -> LoggerHandle {
         .expect("can't start logger")
 }
 
+fn server_foreground() {
+    let control_token = CancellationToken::new();
+    let server_token = control_token.child_token();
+
+    let res = ctrlc::set_handler(move || {
+        log::info!("recieved Ctrl-C");
+        control_token.cancel();
+    });
+
+    if res.is_ok() {
+        log::info!("Press Ctrl-C to stop server");
+    }
+
+    server::server_executor(Config::get(), server_token).unwrap();
+}
+
 fn main() {
     let args = Cli::parse();
     let logger = create_logger();
@@ -75,7 +95,11 @@ fn main() {
         Command::Start => service::start(),
         Command::Stop => service::stop(),
         Command::SaveConfig => {
-            config::Config::default().save();
+            Config::default().save();
+            Ok(())
+        }
+        Command::Serve => {
+            server_foreground();
             Ok(())
         }
     };

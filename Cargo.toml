@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 async-stream = "0.3.3"
 clap = { version = "3.2.22", features = ["derive"] }
+ctrlc = "3.2.3"
 fast-socks5 = "0.8.1"
 flexi_logger = { version = "0.23.3", features = ["specfile_without_notification", "async"] }
 log = "0.4.17"
