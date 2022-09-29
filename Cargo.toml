@@ -7,14 +7,14 @@ edition = "2021"
 
 [dependencies]
 async-stream = "0.3.3"
-clap = { version = "3.2.22", features = ["derive"] }
+clap = { version = "4.0.2", features = ["derive"] }
 ctrlc = "3.2.3"
 fast-socks5 = "0.8.1"
 flexi_logger = { version = "0.23.3", features = ["specfile_without_notification", "async"] }
 log = "0.4.17"
 serde = { version = "1.0.145", features = ["derive"] }
 serde_derive = "1.0.145"
-tokio = { version = "1.21.1", features = ["full", "winapi", "mio"] }
+tokio = { version = "1.21.1", features = ["io-std", "net", "rt-multi-thread", "macros", "winapi"] }
 tokio-stream = "0.1.10"
 tokio-util = "0.7.4"
 toml = "0.5.9"
