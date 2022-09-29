@@ -3,35 +3,25 @@ use fast_socks5::{
     Result,
 };
 use std::future::Future;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{self, AsyncRead, AsyncWrite};
 use tokio::select;
 use tokio::task;
 use tokio_stream::{Stream, StreamExt};
 use tokio_util::sync::CancellationToken;
-
-use std::sync::mpsc::Sender;
 
 use async_stream::stream;
 
 use crate::config::Config;
 use crate::config::PasswordAuth;
 
-pub fn server_executor(
-    cfg: Config,
-    token: CancellationToken,
-    shutdown_tx: Sender<()>,
-) -> std::io::Result<()> {
+pub fn server_executor(cfg: Config, token: CancellationToken) -> io::Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
-        .block_on(async {
-            let result = spawn_socks5_server(cfg, token).await;
-            shutdown_tx.send(()).unwrap();
-            result
-        })
+        .block_on(async { spawn_socks5_server(cfg, token).await })
 }
 
-pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> std::io::Result<()> {
+pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> io::Result<()> {
     let mut server_config = fast_socks5::server::Config::default();
     server_config.set_request_timeout(cfg.request_timeout);
     server_config.set_skip_auth(cfg.skip_auth);
