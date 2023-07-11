@@ -14,7 +14,7 @@ flexi_logger = { version = "0.25.5", features = ["specfile_without_notification"
 log = "0.4.17"
 serde = { version = "1.0.145", features = ["derive"] }
 serde_derive = "1.0.145"
-tokio = { version = "1.24.1", features = ["io-std", "net", "rt-multi-thread", "macros"] }
+tokio = { version = "1.24.2", features = ["io-std", "net", "rt-multi-thread", "macros"] }
 tokio-stream = "0.1.11"
 tokio-util = "0.7.4"
 toml = "0.7.4"
