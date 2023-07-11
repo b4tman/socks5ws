@@ -66,11 +66,12 @@ impl Default for Config {
 impl Config {
     const FILENAME: &'static str = "config.toml";
     fn read<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let data = fs::read(path).map_err(|e| format!("can't read config: {:?}", e))?;
-        toml::from_slice(&data).map_err(|e| format!("can't parse config: {:?}", e))
+        let data = fs::read_to_string(path).map_err(|e| format!("can't read config: {:?}", e))?;
+        toml::from_str(&data).map_err(|e| format!("can't parse config: {:?}", e))
     }
     fn write<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
-        let data = toml::to_vec(&self).map_err(|e| format!("can't serialize config: {:?}", e))?;
+        let data = toml::to_string_pretty(&self)
+            .map_err(|e| format!("can't serialize config: {:?}", e))?;
         fs::write(path, &data).map_err(|e| format!("can't write config: {:?}", e))
     }
     fn file_location() -> Result<PathBuf, String> {
