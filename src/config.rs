@@ -72,7 +72,7 @@ impl Config {
     fn write<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
         let data = toml::to_string_pretty(&self)
             .map_err(|e| format!("can't serialize config: {:?}", e))?;
-        fs::write(path, &data).map_err(|e| format!("can't write config: {:?}", e))
+        fs::write(path, data).map_err(|e| format!("can't write config: {:?}", e))
     }
     fn file_location() -> Result<PathBuf, String> {
         let res = env::current_exe()
