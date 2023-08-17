@@ -1,5 +1,6 @@
 use tokio_util::sync::CancellationToken;
 
+use anyhow::{anyhow, Result};
 use std::{ffi::OsString, thread, time::Duration};
 use windows_service::{
     define_windows_service,
@@ -10,7 +11,6 @@ use windows_service::{
     service_control_handler::{self, ServiceControlHandlerResult},
     service_dispatcher,
     service_manager::{ServiceManager, ServiceManagerAccess},
-    Result,
 };
 
 use crate::config::Config;
@@ -20,21 +20,6 @@ const SERVICE_NAME: &str = "socks5ws_srv";
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 const SERVICE_DISPLAY: &str = "socks5ws proxy";
 const SERVICE_DESCRIPTION: &str = "SOCKS5 proxy windows service";
-
-trait ErrorToString {
-    type Output;
-    fn str_err(self) -> std::result::Result<Self::Output, String>;
-}
-
-impl<T, E> ErrorToString for std::result::Result<T, E>
-where
-    E: std::error::Error,
-{
-    type Output = T;
-    fn str_err(self) -> std::result::Result<Self::Output, String> {
-        self.map_err(|e| e.to_string())
-    }
-}
 
 trait ServiceStatusEx {
     fn running() -> ServiceStatus;
@@ -71,11 +56,11 @@ impl ServiceStatusEx for ServiceStatus {
     }
 }
 
-pub fn install() -> windows_service::Result<()> {
+pub fn install() -> Result<()> {
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
 
-    let service_binary_path = ::std::env::current_exe().unwrap();
+    let service_binary_path = std::env::current_exe()?;
 
     let service_info = ServiceInfo {
         name: SERVICE_NAME.into(),
@@ -95,7 +80,7 @@ pub fn install() -> windows_service::Result<()> {
     Ok(())
 }
 
-pub fn uninstall() -> windows_service::Result<()> {
+pub fn uninstall() -> Result<()> {
     let manager_access = ServiceManagerAccess::CONNECT;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
 
@@ -115,7 +100,7 @@ pub fn uninstall() -> windows_service::Result<()> {
     Ok(())
 }
 
-pub fn stop() -> windows_service::Result<()> {
+pub fn stop() -> Result<()> {
     let manager_access = ServiceManagerAccess::CONNECT;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
 
@@ -130,7 +115,7 @@ pub fn stop() -> windows_service::Result<()> {
     Ok(())
 }
 
-pub fn start() -> windows_service::Result<()> {
+pub fn start() -> Result<()> {
     let manager_access = ServiceManagerAccess::CONNECT;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
 
@@ -149,7 +134,9 @@ pub fn run() -> Result<()> {
     // Register generated `ffi_service_main` with the system and start the service, blocking
     // this thread until the service is stopped.
     log::info!("service run");
-    service_dispatcher::start(SERVICE_NAME, ffi_service_main)
+    service_dispatcher::start(SERVICE_NAME, ffi_service_main)?;
+
+    Ok(())
 }
 
 // Generate the windows service boilerplate.
@@ -163,11 +150,11 @@ define_windows_service!(ffi_service_main, my_service_main);
 // output to file if needed.
 pub fn my_service_main(_arguments: Vec<OsString>) {
     if let Err(e) = run_service() {
-        log::error!("error: {:#?}", e);
+        log::error!("error: {}", e);
     }
 }
 
-pub fn run_service() -> std::result::Result<(), String> {
+pub fn run_service() -> Result<()> {
     // Create a cancellation token to be able to cancell server
     let control_token = CancellationToken::new();
     let server_token = control_token.child_token();
@@ -192,12 +179,10 @@ pub fn run_service() -> std::result::Result<(), String> {
 
     // Register system service event handler.
     // The returned status handle should be used to report service status changes to the system.
-    let status_handle = service_control_handler::register(SERVICE_NAME, event_handler).str_err()?;
+    let status_handle = service_control_handler::register(SERVICE_NAME, event_handler)?;
 
     // Tell the system that service is running
-    status_handle
-        .set_service_status(ServiceStatus::running())
-        .str_err()?;
+    status_handle.set_service_status(ServiceStatus::running())?;
 
     let cfg = Config::get();
     log::info!("start with config: {:#?}", cfg);
@@ -206,26 +191,22 @@ pub fn run_service() -> std::result::Result<(), String> {
 
     log::info!("server thread stoped");
 
+    // join() => Err(), when thread panic
     if let Err(e) = result {
         log::error!("server panic: {:#?}", e);
-        status_handle
-            .set_service_status(ServiceStatus::stopped_with_error(1))
-            .str_err()?;
-        return Err("server panic".into());
+        status_handle.set_service_status(ServiceStatus::stopped_with_error(1))?;
+        return Err(anyhow!("server panic"));
     }
 
+    // join() => Ok(Err()), when server executor error
     if let Err(e) = result.unwrap() {
         log::error!("server error: {:#?}", e);
-        status_handle
-            .set_service_status(ServiceStatus::stopped_with_error(2))
-            .str_err()?;
-        return Err("server error".into());
+        status_handle.set_service_status(ServiceStatus::stopped_with_error(2))?;
+        return Err(anyhow!("server error"));
     }
 
     // Tell the system that service has stopped.
-    status_handle
-        .set_service_status(ServiceStatus::stopped())
-        .str_err()?;
+    status_handle.set_service_status(ServiceStatus::stopped())?;
 
     log::info!("service stoped");
     Ok(())

@@ -9,6 +9,7 @@ use flexi_logger::{
     AdaptiveFormat, Age, Cleanup, Criterion, Duplicate, FileSpec, Logger, LoggerHandle, Naming,
 };
 
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tokio_util::sync::CancellationToken;
 
@@ -39,15 +40,15 @@ struct Cli {
     command: Command,
 }
 
-fn create_logger() -> LoggerHandle {
+fn create_logger() -> Result<LoggerHandle> {
     Logger::try_with_str("info")
-        .expect("default logging level invalid")
+        .context("default logging level invalid")?
         .log_to_file(
             FileSpec::default().directory(
                 std::env::current_exe()
-                    .expect("can't get current exe path")
+                    .context("can't get current exe path")?
                     .parent()
-                    .expect("can't get parent folder"),
+                    .context("can't get parent folder")?,
             ),
         )
         .rotate(
@@ -62,13 +63,18 @@ fn create_logger() -> LoggerHandle {
         .write_mode(flexi_logger::WriteMode::Async)
         .start_with_specfile(
             std::env::current_exe()
-                .unwrap()
+                .context("can't get current exe path")?
                 .with_file_name("logspec.toml"),
         )
-        .expect("can't start logger")
+        .context("can't start logger")
 }
 
-fn server_foreground() {
+fn save_default_config() -> Result<()> {
+    Config::default().save();
+    Ok(())
+}
+
+fn server_foreground() -> Result<()> {
     let control_token = CancellationToken::new();
     let server_token = control_token.child_token();
 
@@ -81,12 +87,14 @@ fn server_foreground() {
         log::info!("Press Ctrl-C to stop server");
     }
 
-    server::server_executor(Config::get(), server_token).unwrap();
+    server::server_executor(Config::get(), server_token)?;
+
+    Ok(())
 }
 
-fn main() {
+fn main() -> Result<()> {
     let args = Cli::parse();
-    let logger = create_logger();
+    let logger = create_logger()?;
 
     let res = match args.command {
         Command::Install => service::install(),
@@ -94,19 +102,15 @@ fn main() {
         Command::Run => service::run(),
         Command::Start => service::start(),
         Command::Stop => service::stop(),
-        Command::SaveConfig => {
-            Config::default().save();
-            Ok(())
-        }
-        Command::Serve => {
-            server_foreground();
-            Ok(())
-        }
+        Command::SaveConfig => save_default_config(),
+        Command::Serve => server_foreground(),
     };
 
-    if let Err(e) = res {
-        log::error!("{:?} error: {:#?}", args.command, e);
+    if let Err(e) = &res {
+        log::error!("{:?} -> error: {:?}", args.command, e);
     }
+    res?;
 
     drop(logger);
+    Ok(())
 }

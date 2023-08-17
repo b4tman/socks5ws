@@ -1,9 +1,7 @@
-use fast_socks5::{
-    server::{SimpleUserPassword, Socks5Server, Socks5Socket},
-    Result,
-};
+use anyhow::{anyhow, Result};
+use fast_socks5::server::{SimpleUserPassword, Socks5Server, Socks5Socket};
 use std::future::Future;
-use tokio::io::{self, AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::select;
 use tokio::task;
 use tokio_stream::{Stream, StreamExt};
@@ -14,14 +12,14 @@ use async_stream::stream;
 use crate::config::Config;
 use crate::config::PasswordAuth;
 
-pub fn server_executor(cfg: Config, token: CancellationToken) -> io::Result<()> {
+pub fn server_executor(cfg: Config, token: CancellationToken) -> Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
         .block_on(async { spawn_socks5_server(cfg, token).await })
 }
 
-pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> io::Result<()> {
+pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> Result<()> {
     let mut server_config = fast_socks5::server::Config::default();
     server_config.set_request_timeout(cfg.request_timeout);
     server_config.set_skip_auth(cfg.skip_auth);
@@ -51,7 +49,7 @@ pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> io::R
                 spawn_and_log_error(socket.upgrade_to_socks5(), child_token);
             }
             Err(err) => {
-                log::error!("accept error = {:?}", err);
+                log::error!("accept error: {}", err);
             }
         }
     }
@@ -93,7 +91,7 @@ where
 
 fn spawn_and_log_error<F, T>(future: F, token: CancellationToken) -> task::JoinHandle<()>
 where
-    F: Future<Output = Result<Socks5Socket<T>>> + Send + 'static,
+    F: Future<Output = fast_socks5::Result<Socks5Socket<T>>> + Send + 'static,
     T: AsyncRead + AsyncWrite + Unpin,
 {
     tokio::spawn(async move {
@@ -101,10 +99,10 @@ where
             biased;
 
             _ = token.cancelled() => {
-                Err("Client connection canceled".to_string())
+                Err(anyhow!("Client connection canceled"))
             }
             res = future => {
-                res.map_err(|e| e.to_string())
+                res.map_err(anyhow::Error::new)
             }
         };
         if let Err(e) = result {

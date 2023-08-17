@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use anyhow::{Context, Result};
 use serde_derive::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -65,25 +66,24 @@ impl Default for Config {
 
 impl Config {
     const FILENAME: &'static str = "config.toml";
-    fn read<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let data = fs::read_to_string(path).map_err(|e| format!("can't read config: {:?}", e))?;
-        toml::from_str(&data).map_err(|e| format!("can't parse config: {:?}", e))
+    fn read<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let data = fs::read_to_string(path).context("can't read config")?;
+        toml::from_str(&data).context("can't parse config")
     }
-    fn write<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
-        let data = toml::to_string_pretty(&self)
-            .map_err(|e| format!("can't serialize config: {:?}", e))?;
-        fs::write(path, data).map_err(|e| format!("can't write config: {:?}", e))
+    fn write<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let data = toml::to_string_pretty(&self).context("can't serialize config")?;
+        fs::write(path, data).context("can't write config")
     }
-    fn file_location() -> Result<PathBuf, String> {
+    fn file_location() -> Result<PathBuf> {
         let res = env::current_exe()
-            .map_err(|e| format!("can't get current exe path: {:?}", e))?
+            .context("can't get current exe path")?
             .with_file_name(Config::FILENAME);
         Ok(res)
     }
     pub fn get() -> Self {
         let path = Config::file_location();
         if let Err(e) = path {
-            log::error!("Error: {e}, using default config");
+            log::error!(r#"Error: "{e}", using default config"#);
             return Config::default();
         }
 
@@ -91,7 +91,7 @@ impl Config {
         let cfg = Config::read(path);
         match cfg {
             Err(e) => {
-                log::error!("Error: {e}, using default config");
+                log::error!(r#"Error: "{e}", using default config"#);
                 Config::default()
             }
             Ok(cfg) => cfg,
@@ -106,9 +106,9 @@ impl Config {
 
         let res = self.write(&path);
         if let Err(e) = res {
-            log::error!("save error: {e}");
+            log::error!("save error: {}", &e);
         } else {
-            log::info!("config saved to: {}", path.to_str().unwrap());
+            log::info!(r#"config saved to: "{}""#, path.to_str().unwrap());
         }
     }
 }
