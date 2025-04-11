@@ -25,7 +25,7 @@ jobs:
     - name: Build release
       run: cargo build --release
 
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         name: socks5ws
         path: target/release/socks5ws.exe
