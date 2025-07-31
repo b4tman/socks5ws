@@ -1,10 +1,11 @@
-use anyhow::{anyhow, Result};
-use fast_socks5::server::{SimpleUserPassword, Socks5Server, Socks5Socket};
+use anyhow::{Context, Result, anyhow};
+use fast_socks5::server::{DnsResolveHelper, Socks5ServerProtocol, run_tcp_proxy, run_udp_proxy};
+use fast_socks5::{ReplyError, Socks5Command, SocksError};
 use std::future::Future;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpListener;
 use tokio::select;
 use tokio::task;
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::{Stream, StreamExt, wrappers::TcpListenerStream};
 use tokio_util::sync::CancellationToken;
 
 use async_stream::stream;
@@ -20,24 +21,11 @@ pub fn server_executor(cfg: Config, token: CancellationToken) -> Result<()> {
 }
 
 pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> Result<()> {
-    let mut server_config = fast_socks5::server::Config::default();
-    server_config.set_request_timeout(cfg.request_timeout);
-    server_config.set_skip_auth(cfg.skip_auth);
-    server_config.set_dns_resolve(cfg.dns_resolve);
-    server_config.set_execute_command(cfg.execute_command);
-    server_config.set_udp_support(cfg.allow_udp);
+    cfg.validate()?;
 
-    if let Some(PasswordAuth { username, password }) = cfg.auth {
-        server_config.set_authentication(SimpleUserPassword { username, password });
-        log::info!("Simple auth system has been set.");
-    } else {
-        log::warn!("No authentication has been set!");
-    }
+    let listener = TcpListener::bind(&cfg.listen_addr).await?;
 
-    let mut listener = Socks5Server::bind(&cfg.listen_addr).await?;
-    listener.set_config(server_config);
-
-    let incoming = stream_with_cancellation(listener.incoming(), &token);
+    let incoming = stream_with_cancellation(TcpListenerStream::new(listener), &token);
     tokio::pin!(incoming);
 
     log::info!("Listen for socks connections @ {}", &cfg.listen_addr);
@@ -46,14 +34,47 @@ pub async fn spawn_socks5_server(cfg: Config, token: CancellationToken) -> Resul
         match socket_res {
             Ok(socket) => {
                 let child_token = token.child_token();
-                spawn_and_log_error(socket.upgrade_to_socks5(), child_token);
+                spawn_and_log_error(serve_socks5(cfg.clone(), socket), child_token);
             }
             Err(err) => {
-                log::error!("accept error: {}", err);
+                log::error!("accept error: {err}");
             }
         }
     }
 
+    Ok(())
+}
+
+async fn serve_socks5(cfg: Config, socket: tokio::net::TcpStream) -> Result<(), SocksError> {
+    let (proto, cmd, target_addr) = match &cfg.auth {
+        None if cfg.skip_auth => Socks5ServerProtocol::skip_auth_this_is_not_rfc_compliant(socket),
+        None => Socks5ServerProtocol::accept_no_auth(socket).await?,
+        Some(PasswordAuth { username, password }) => {
+            Socks5ServerProtocol::accept_password_auth(socket, |user, pass| {
+                user == *username && pass == *password
+            })
+            .await?
+            .0
+        }
+    }
+    .read_command()
+    .await?
+    .resolve_dns()
+    .await?;
+
+    match cmd {
+        Socks5Command::TCPConnect => {
+            run_tcp_proxy(proto, &target_addr, cfg.request_timeout, false).await?;
+        }
+        Socks5Command::UDPAssociate if cfg.allow_udp => {
+            let reply_ip = cfg.public_addr.context("invalid reply ip")?;
+            run_udp_proxy(proto, &target_addr, None, reply_ip, None).await?;
+        }
+        _ => {
+            proto.reply_error(&ReplyError::CommandNotSupported).await?;
+            return Err(ReplyError::CommandNotSupported.into());
+        }
+    };
     Ok(())
 }
 
@@ -89,10 +110,9 @@ where
     }
 }
 
-fn spawn_and_log_error<F, T>(future: F, token: CancellationToken) -> task::JoinHandle<()>
+fn spawn_and_log_error<F>(future: F, token: CancellationToken) -> task::JoinHandle<()>
 where
-    F: Future<Output = fast_socks5::Result<Socks5Socket<T>>> + Send + 'static,
-    T: AsyncRead + AsyncWrite + Unpin,
+    F: Future<Output = Result<(), SocksError>> + Send + 'static,
 {
     tokio::spawn(async move {
         let result = select! {

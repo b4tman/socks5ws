@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde_derive::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -11,6 +11,9 @@ pub struct Config {
     /// Bind on address address. eg. `127.0.0.1:1080`
     #[serde(default = "default_listen_addr")]
     pub listen_addr: String,
+    /// Our external IP address to be sent in reply packets (required for UDP)
+    #[serde(default)]
+    pub public_addr: Option<std::net::IpAddr>,
     /// Request timeout
     #[serde(default = "default_timeout")]
     pub request_timeout: u64,
@@ -20,19 +23,9 @@ pub struct Config {
     /// Avoid useless roundtrips if we don't need the Authentication layer
     #[serde(default)]
     pub skip_auth: bool,
-    /// Enable dns-resolving
-    #[serde(default = "default_true")]
-    pub dns_resolve: bool,
-    /// Enable command execution
-    #[serde(default = "default_true")]
-    pub execute_command: bool,
     /// Enable UDP support
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub allow_udp: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 fn default_timeout() -> u64 {
@@ -54,12 +47,11 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             listen_addr: default_listen_addr(),
+            public_addr: None,
             request_timeout: default_timeout(),
             auth: None,
             skip_auth: false,
-            dns_resolve: true,
-            execute_command: true,
-            allow_udp: true,
+            allow_udp: false,
         }
     }
 }
@@ -110,5 +102,18 @@ impl Config {
         } else {
             log::info!(r#"config saved to: "{}""#, path.to_str().unwrap());
         }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.allow_udp && self.public_addr.is_none() {
+            return Err(anyhow!("Can't allow UDP if public-addr is not set"));
+        }
+        if self.skip_auth && self.auth.is_some() {
+            return Err(anyhow!(
+                "Can't use skip-auth flag and authentication altogether."
+            ));
+        }
+
+        Ok(())
     }
 }
