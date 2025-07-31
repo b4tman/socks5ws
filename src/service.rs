@@ -1,6 +1,6 @@
 use tokio_util::sync::CancellationToken;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::{ffi::OsString, thread, time::Duration};
 use windows_service::{
     define_windows_service,
@@ -150,7 +150,7 @@ define_windows_service!(ffi_service_main, my_service_main);
 // output to file if needed.
 pub fn my_service_main(_arguments: Vec<OsString>) {
     if let Err(e) = run_service() {
-        log::error!("error: {}", e);
+        log::error!("error: {e}");
     }
 }
 
@@ -185,7 +185,7 @@ pub fn run_service() -> Result<()> {
     status_handle.set_service_status(ServiceStatus::running())?;
 
     let cfg = Config::get();
-    log::info!("start with config: {:#?}", cfg);
+    log::info!("start with config: {cfg:#?}");
 
     let result = std::thread::spawn(move || server_executor(cfg, server_token)).join();
 
@@ -193,14 +193,14 @@ pub fn run_service() -> Result<()> {
 
     // join() => Err(), when thread panic
     if let Err(e) = result {
-        log::error!("server panic: {:#?}", e);
+        log::error!("server panic: {e:#?}");
         status_handle.set_service_status(ServiceStatus::stopped_with_error(1))?;
         return Err(anyhow!("server panic"));
     }
 
     // join() => Ok(Err()), when server executor error
     if let Err(e) = result.unwrap() {
-        log::error!("server error: {:#?}", e);
+        log::error!("server error: {e:#?}");
         status_handle.set_service_status(ServiceStatus::stopped_with_error(2))?;
         return Err(anyhow!("server error"));
     }
